@@ -11,12 +11,23 @@ async function forward(req:NextRequest, method:string){
   const resource=segments[offset]||"";
   if(segments.length>offset+1) body.id=decodeURIComponent(segments[offset+1]);
   if(req.headers.get("x-record-id"))body.id=req.headers.get("x-record-id");
-  const action=segments[offset+2]==="restore"?"restore":resource==="data"?"getAll":resource==="dashboard"?"dashboard":method==="GET"?"list":method==="POST"?"create":method==="PUT"?"update":method==="DELETE"?"delete":"";
+  const action=segments[offset+2]==="restore"?"restore":resource==="data"?(query.resources?"getData":"getAll"):resource==="dashboard"?"dashboard":method==="GET"?"list":method==="POST"?"create":method==="PUT"?"update":method==="DELETE"?"delete":"";
   if(!action) return NextResponse.json({error:"API không hỗ trợ phương thức này."},{status:405});
   try{
     const result=await fetch(url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action,resource,...query,...body,apiToken:process.env.APP_API_TOKEN||""}),cache:"no-store",redirect:"follow"});
-    const data=await result.json(); return NextResponse.json(data,{status:data.error?400:200});
-  }catch(e){console.error("Apps Script proxy error",e);return NextResponse.json({error:"Không thể kết nối dữ liệu. Vui lòng thử lại."},{status:502})}
+    const contentType=result.headers.get("content-type")||"";
+    const text=await result.text();
+    let data:any;
+    try{data=JSON.parse(text)}catch{
+      console.error("Apps Script returned a non-JSON response",{status:result.status,contentType});
+      return NextResponse.json({error:"Google Apps Script không trả dữ liệu JSON. Hãy kiểm tra URL /exec, quyền truy cập và bản triển khai Web App."},{status:502});
+    }
+    if(!result.ok){
+      console.error("Apps Script request failed",{status:result.status,contentType});
+      return NextResponse.json({error:data.error||`Google Apps Script trả mã HTTP ${result.status}.`},{status:502});
+    }
+    return NextResponse.json(data,{status:data.error?400:200});
+  }catch(e){console.error("Apps Script proxy request failed",e instanceof Error?e.message:"unknown error");return NextResponse.json({error:"Không kết nối được tới Google Apps Script. Hãy kiểm tra bản triển khai và thử lại."},{status:502})}
 }
 export const GET=(r:NextRequest)=>forward(r,"GET");
 export const POST=(r:NextRequest)=>forward(r,"POST");

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback,useEffect,useMemo,useState } from "react";
 import { CalendarPlus,Edit2,Plus,Trash2 } from "lucide-react";
-import { getAll,save,remove } from "@/services/api";
+import { getData,save,remove } from "@/services/api";
 import type { AppData,Attendance as AttendanceRecord,SalaryRate } from "@/types";
 import { currentMonth,todayISO,formatDate,dateRange } from "@/lib/dates";
 import { money,number } from "@/lib/format";
@@ -13,7 +13,7 @@ const hours24=Array.from({length:24},(_,i)=>String(i).padStart(2,"0"));
 const minutes=Array.from({length:60},(_,i)=>String(i).padStart(2,"0"));
 export function AttendancePage(){
  const [data,setData]=useState<AppData>(),[busy,setBusy]=useState(true),[loadError,setLoadError]=useState(""),[month,setMonth]=useState(currentMonth()),[company,setCompany]=useState(""),[from,setFrom]=useState(""),[to,setTo]=useState(""),[preset,setPreset]=useState(""),[modal,setModal]=useState(false),[editing,setEditing]=useState<AttendanceRecord>(),[msg,setMsg]=useState(""),[kind,setKind]=useState<"success"|"error">("success"),[saving,setSaving]=useState(false);
- const refresh=useCallback(async()=>{setBusy(true);setLoadError("");try{setData(await getAll())}catch(e){const message=(e as Error).message;setLoadError(message);setKind("error");setMsg(message)}finally{setBusy(false)}},[]);
+ const refresh=useCallback(async()=>{setBusy(true);setLoadError("");try{const partial=await getData(["attendance","companies","rates"]);setData(previous=>({...blank,...previous,...partial}))}catch(e){const message=(e as Error).message;setLoadError(message);setKind("error");setMsg(message)}finally{setBusy(false)}},[]);
  useEffect(()=>{refresh()},[refresh]);const d=data||blank;
  const shown=useMemo(()=>d.attendance.filter(x=>(!month||x.date.startsWith(month))&&(!company||x.companyId===company)&&(!from||x.date>=from)&&(!to||x.date<=to)).sort((a,b)=>b.date.localeCompare(a.date)),[d,month,company,from,to]);
  const hours=shown.reduce((s,x)=>s+x.hours,0),pay=shown.reduce((s,x)=>s+x.pay,0);

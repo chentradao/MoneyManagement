@@ -5,6 +5,7 @@ export async function api<T>(path:string, options:RequestInit={}):Promise<T>{
   if(!response.ok) throw new Error(body.error||"Không thể kết nối dữ liệu. Vui lòng thử lại."); return body as T;
 }
 export const getAll=()=>api<AppData>("data");
+export const getData=(resources:(keyof AppData)[])=>api<Partial<AppData>>("data?resources="+encodeURIComponent(resources.join(",")));
 export const getDashboard=(month:string,companyId="")=>api<DashboardData>("dashboard?month="+encodeURIComponent(month)+"&companyId="+encodeURIComponent(companyId));
 export const save=(resource:string, body:unknown, id?:string)=>api(id?resource+"/"+encodeURIComponent(id):resource,{method:id?"PUT":"POST",body:JSON.stringify(body)});
 export const remove=(resource:string,id:string)=>api(resource+"/"+encodeURIComponent(id),{method:"DELETE"});

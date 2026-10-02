@@ -1,7 +1,7 @@
 "use client";
 import { useCallback,useEffect,useMemo,useState } from "react";
 import { ArrowDownLeft,ArrowUpRight,Check,Edit2,Plus,Trash2,Wallet,Landmark,ChartNoAxesCombined,HandCoins } from "lucide-react";
-import { getAll,save,remove } from "@/services/api";
+import { getData,save,remove } from "@/services/api";
 import type { AppData,AccountTransaction,CashTransaction,Investment,Loan } from "@/types";
 import { todayISO,formatDate,dateRange } from "@/lib/dates";
 import { money } from "@/lib/format";
@@ -16,7 +16,7 @@ const financeTabs:{key:Tab;label:string;Icon:typeof Wallet}[]=[
 const zero:AppData={cash:[],accounts:[],investments:[],loans:[],companies:[],rates:[],attendance:[]};
 export function Finance(){
  const [tab,setTab]=useState<Tab>("cash"),[data,setData]=useState<AppData>(),[busy,setBusy]=useState(true),[loadError,setLoadError]=useState(""),[modal,setModal]=useState(false),[editing,setEditing]=useState<any>(),[msg,setMsg]=useState(""),[kind,setKind]=useState<"success"|"error">("success"),[saving,setSaving]=useState(false),[from,setFrom]=useState(""),[to,setTo]=useState(""),[direction,setDirection]=useState(""),[preset,setPreset]=useState("");
- const refresh=useCallback(async()=>{setBusy(true);setLoadError("");try{setData(await getAll())}catch(e){const message=(e as Error).message;setLoadError(message);setKind("error");setMsg(message)}finally{setBusy(false)}},[]);
+ const refresh=useCallback(async()=>{setBusy(true);setLoadError("");try{const partial=await getData([tab]);setData(previous=>({...zero,...previous,...partial}))}catch(e){const message=(e as Error).message;setLoadError(message);setKind("error");setMsg(message)}finally{setBusy(false)}},[tab]);
  useEffect(()=>{refresh()},[refresh]);const d=data||zero;
  const rows=useMemo(()=>{let list:any[]=[...d[tab]];if(["cash","accounts"].includes(tab)){if(from)list=list.filter(x=>x.date>=from);if(to)list=list.filter(x=>x.date<=to);if(direction==="income")list=list.filter(x=>x.amount>0);if(direction==="expense")list=list.filter(x=>x.amount<0)}return list.reverse()},[d,tab,from,to,direction]);
  const invested=d.investments.reduce((s,x)=>s+x.principal,0),market=d.investments.reduce((s,x)=>s+x.currentValue,0),loanOutstanding=d.loans.reduce((s,x)=>s+x.remaining,0),recovered=d.loans.filter(x=>x.status==="Đã trả").reduce((s,x)=>s+x.amount,0);

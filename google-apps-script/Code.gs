@@ -38,6 +38,7 @@ function doPost(e){
 }
 function dispatch(req){
   if(req.action==="getAll") return getAll();
+  if(req.action==="getData") return getData(req.resources);
   if(req.action==="dashboard") return dashboard(req.month||Utilities.formatDate(new Date(),CONFIG.timezone,"yyyy-MM"),req.companyId||"");
   const key=String(req.resource||"").replace(/-/g,"");
   const map={cash:"cash",accounts:"accounts",investments:"investments",loans:"loans",companies:"companies",salaryrates:"rates",attendance:"attendance"};
@@ -62,21 +63,36 @@ function headerMap(sheet,resource){
   Object.keys(FIELDS[resource]).forEach(k=>{const aliases=FIELDS[resource][k].map(norm);const ix=headers.findIndex(h=>aliases.includes(norm(h)));if(ix>=0)map[k]=ix+1;});
   const missing=REQUIRED[resource].filter(k=>!map[k]);
   if(missing.length) throw Error("Sheet «"+sheet.getName()+"» thiếu header bắt buộc cho: "+missing.join(", ")+". Đã dừng trước khi ghi; hãy kiểm tra tên cột và dùng mapping cấu hình.");
+  map._headers=headers;
   return map;
 }
-function rowId(sheet,row,map,resource,values,occurrence){
+function rowId(sheet,row,map,resource,values,occurrence,metadataByRow){
   if(map.id && values[map.id-1]) return String(values[map.id-1]);
-  const metas=sheet.getRange(row,1,1,sheet.getLastColumn()).getDeveloperMetadata();
-  const found=metas.find(m=>m.getKey()==="APP_RECORD_ID"); if(found)return found.getValue();
+  const rowMetadata=metadataByRow[row]||{};
+  if(rowMetadata.APP_RECORD_ID)return rowMetadata.APP_RECORD_ID;
   const keys={cash:["date","description","amount"],accounts:["date","amount","note"],investments:["type","name","principal","currentValue"],loans:["borrower","loanDate","amount","interestRate","dueDate","status","note"],companies:["id","name"],rates:["companyId","effectiveFrom","effectiveTo","rate","unit","note"],attendance:["date","companyId","startTime","endTime","status","note"]}[resource];
   const stable=keys.map(k=>{const v=map[k]?values[map[k]-1]:"";return v instanceof Date?Utilities.formatDate(v,CONFIG.timezone,"yyyy-MM-dd'T'HH:mm:ss"):String(v==null?"":v)}).join("|");
   const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,resource+"|"+stable);
   return "LEG-"+Utilities.base64EncodeWebSafe(digest).replace(/=/g,"").slice(0,26);
 }
-function records(resource,includeDeleted){
+function metadataIndex(sheet){
+  const byRow=Object.create(null);
+  sheet.createDeveloperMetadataFinder().find().forEach(meta=>{
+    const rowRange=meta.getLocation().getRow();
+    if(!rowRange)return;
+    const row=rowRange.getRow(), key=meta.getKey();
+    if(key!=="APP_RECORD_ID"&&key!=="APP_SOFT_DELETED")return;
+    if(!byRow[row])byRow[row]=Object.create(null);
+    byRow[row][key]=meta.getValue()||true;
+  });
+  return byRow;
+}
+function records(resource,includeDeleted,skipIds){
   const sheet=workbookFor(resource), map=headerMap(sheet,resource), last=sheet.getLastRow(), result=[], counts={};
-  if(last<2)return {sheet,map,items:result};
-  const rows=sheet.getRange(2,1,last-1,sheet.getLastColumn()).getValues();
+  if(last<2)return {sheet,map,headers:map._headers,items:result};
+  const lastColumn=sheet.getLastColumn();
+  const rows=sheet.getRange(2,1,last-1,lastColumn).getValues();
+  const metadataByRow=metadataIndex(sheet);
   rows.forEach((v,i)=>{
     if(v.every(x=>x===""||x===null))return;
     const has=(k)=>map[k]&&v[map[k]-1]!==""&&v[map[k]-1]!==null;
@@ -88,12 +104,17 @@ function records(resource,includeDeleted){
       resource==="rates"?has("companyId")&&has("effectiveFrom")&&has("rate"):
       has("date")&&has("companyId");
     if(!valid)return;
-    const metadata=sheet.getRange(i+2,1,1,sheet.getLastColumn()).getDeveloperMetadata(),deleted=metadata.find(m=>m.getKey()==="APP_SOFT_DELETED");
+    const row=i+2, metadata=metadataByRow[row]||{}, deleted=!!metadata.APP_SOFT_DELETED;
     if(deleted&&!includeDeleted)return;
-    const signature=JSON.stringify(v.map(x=>x instanceof Date?x.toISOString():String(x==null?"":x)));counts[signature]=(counts[signature]||0)+1;
-    result.push({row:i+2,values:v,id:rowId(sheet,i+2,map,resource,v,counts[signature]),deleted:!!deleted});
+    let id="";
+    if(!skipIds){
+      const signature=JSON.stringify(v.map(x=>x instanceof Date?x.toISOString():String(x==null?"":x)));
+      counts[signature]=(counts[signature]||0)+1;
+      id=rowId(sheet,row,map,resource,v,counts[signature],metadataByRow);
+    }
+    result.push({row,values:v,id,deleted});
   });
-  return {sheet,map,items:result};
+  return {sheet,map,headers:map._headers,items:result};
 }
 function dateOut(v){if(!v)return "";if(v instanceof Date)return Utilities.formatDate(v,CONFIG.timezone,"yyyy-MM-dd");const s=String(v);if(/^\d{4}-\d\d-\d\d/.test(s))return s.slice(0,10);return s;}
 function timeOut(v){if(!v)return "";if(v instanceof Date)return Utilities.formatDate(v,CONFIG.timezone,"HH:mm");if(typeof v==="number")return Utilities.formatDate(new Date(Math.round(v*86400000)),"UTC","HH:mm");return String(v).slice(0,5);}
@@ -108,12 +129,24 @@ function objectOf(resource,r){
   if(resource==="companies")return{id,name:String(value(r,m,"name")||""),active:["Có","Yes","TRUE","1","Đang hoạt động","true"].includes(String(active)),note:String(value(r,m,"note")||"")};
   if(resource==="rates")return{id,companyId:String(value(r,m,"companyId")||""),effectiveFrom:dateOut(value(r,m,"effectiveFrom")),effectiveTo:dateOut(value(r,m,"effectiveTo")),rate:num(value(r,m,"rate")),unit:String(value(r,m,"unit")||""),note:String(value(r,m,"note")||"")};
   const date=dateOut(value(r,m,"date")),companyId=String(value(r,m,"companyId")||""), startTime=timeOut(value(r,m,"startTime")),endTime=timeOut(value(r,m,"endTime"));
-  const hrs=num(value(r,m,"hours")), rate=num(value(r,m,"salaryRate")), payVal=value(r,m,"pay");
-  return{id,date,companyId,startTime,endTime,hours:hrs,salaryRate:rate,pay:payVal!==""&&payVal!=null?num(payVal):hrs*rate,status:String(value(r,m,"status")||""),note:String(value(r,m,"note")||"")};
+  const hrs=num(value(r,m,"hours")), rate=num(value(r,m,"salaryRate")), payVal=value(r,m,"pay"), status=String(value(r,m,"status")||"");
+  const pay=status==="Nghỉ không lương"?0:(payVal!==""&&payVal!=null?num(payVal):hrs*rate);
+  return{id,date,companyId,startTime,endTime,hours:hrs,salaryRate:rate,pay,status,note:String(value(r,m,"note")||"")};
 }
-function list(resource){const r=records(resource);return {items:r.items.map(x=>objectOf(resource,{...x,map:r.map,values:x.values})),schema:{sheet:r.sheet.getName(),headers:r.sheet.getRange(1,1,1,r.sheet.getLastColumn()).getDisplayValues()[0]}};}
+function list(resource){const r=records(resource);return {items:r.items.map(x=>objectOf(resource,{...x,map:r.map,values:x.values})),schema:{sheet:r.sheet.getName(),headers:r.headers||[]}};}
 function getAll(){
   const out={};["cash","accounts","investments","loans","companies","rates","attendance"].forEach(k=>out[k]=list(k).items);
+  return out;
+}
+function getData(resources){
+  const allowed={cash:true,accounts:true,investments:true,loans:true,companies:true,rates:true,attendance:true};
+  const names=Array.isArray(resources)?resources:String(resources||"").split(",").filter(Boolean);
+  if(!names.length)throw Error("Chưa chọn nhóm dữ liệu cần tải.");
+  const out={};
+  names.forEach(name=>{
+    if(!allowed[name])throw Error("API không hỗ trợ nhóm dữ liệu này: "+name);
+    out[name]=list(name).items;
+  });
   return out;
 }
 function persistId(sheet,row,map,id){if(map.id){sheet.getRange(row,map.id).setValue(id);return;}const range=sheet.getRange(row,1,1,sheet.getLastColumn()),existing=range.getDeveloperMetadata().find(m=>m.getKey()==="APP_RECORD_ID");if(existing)existing.setValue(id);else range.addDeveloperMetadata("APP_RECORD_ID",id,SpreadsheetApp.DeveloperMetadataVisibility.DOCUMENT);}
@@ -142,34 +175,59 @@ function normalizeInput(resource,req,current){
     if(!x.date)throw Error("Vui lòng nhập ngày làm.");parseDate(x.date);validateCompany(x.companyId);
     const a=toMinutes(x.startTime),b=toMinutes(x.endTime);if(b<=a)throw Error("Giờ kết thúc phải sau giờ bắt đầu; ca qua ngày chưa được hỗ trợ.");
     const hrs=(b-a)/60, existing=records("attendance");if(existing.items.some(r=>r.id!==x.id&&dateOut(r.values[existing.map.date-1])===x.date&&String(r.values[existing.map.companyId-1])===x.companyId))throw Error("Đã có ngày công cho công ty này trong ngày đã chọn.");
-    const rate=salaryAt(x.companyId,x.date);x.id=x.id||newId("ATT");x.hours=hrs;x.salaryRate=rate.rate;x.pay=hrs*rate.rate;x.status=x.status||"Đi làm";
+    const rate=salaryAt(x.companyId,x.date);x.id=x.id||newId("ATT");x.hours=hrs;x.salaryRate=rate.rate;x.status=x.status||"Đi làm";x.pay=x.status==="Nghỉ không lương"?0:hrs*rate.rate;
   }
   return x;
 }
 function setFields(sheet,row,map,resource,x,isNew){
+  const updates={};
   Object.keys(FIELDS[resource]).forEach(k=>{
     if(!map[k]||x[k]===undefined)return;
     let v=x[k];if(["date","loanDate","dueDate","effectiveFrom","effectiveTo"].includes(k))v=v?parseDate(v):"";
     if(["cash","accounts"].includes(resource)&&k==="balance")return;
     if(resource==="cash"&&k==="amount")v=Number(v);
-    sheet.getRange(row,map[k]).setValue(v);
+    updates[map[k]]=v;
   });
   if((resource==="cash"||resource==="accounts")&&map.balance){
-    const all=records(resource,true), prior=all.items.filter(i=>i.row<row).reduce((sum,i)=>sum+num(i.values[map.amount-1]),0);
-    sheet.getRange(row,map.balance).setValue(prior+Number(x.amount));
+    const count=Math.max(0,row-2), firstColumn=Math.min(map.date,map.amount), lastColumn=Math.max(map.date,map.amount);
+    let prior=0;
+    if(count){
+      const rows=sheet.getRange(2,firstColumn,count,lastColumn-firstColumn+1).getValues();
+      const dateOffset=map.date-firstColumn, amountOffset=map.amount-firstColumn;
+      prior=rows.reduce((sum,values)=>{
+        const hasDate=values[dateOffset]!==""&&values[dateOffset]!==null;
+        const amount=values[amountOffset];
+        return hasDate&&amount!==""&&amount!==null?sum+num(amount):sum;
+      },0);
+    }
+    updates[map.balance]=prior+Number(x.amount);
   }
-  if(resource==="investments"&&map.profitLoss)sheet.getRange(row,map.profitLoss).setValue(Number(x.currentValue)-Number(x.principal));
-  if(resource==="loans"&&map.remaining)sheet.getRange(row,map.remaining).setValue(x.status==="Đã trả"?0:Number(x.amount));
+  if(resource==="investments"&&map.profitLoss)updates[map.profitLoss]=Number(x.currentValue)-Number(x.principal);
+  if(resource==="loans"&&map.remaining)updates[map.remaining]=x.status==="Đã trả"?0:Number(x.amount);
+
+  const columns=Object.keys(updates).map(Number).sort((a,b)=>a-b);
+  let start=0, group=[];
+  columns.forEach(column=>{
+    if(group.length&&column!==group[group.length-1]+1){
+      sheet.getRange(row,start,1,group.length).setValues([group.map(c=>updates[c])]);
+      group=[];
+    }
+    if(!group.length)start=column;
+    group.push(column);
+  });
+  if(group.length)sheet.getRange(row,start,1,group.length).setValues([group.map(c=>updates[c])]);
 }
 function create(resource,req){
-  const {sheet,map,items}=records(resource), x=normalizeInput(resource,req,null), id=x.id||newId(resource==="attendance"?"ATT":resource.toUpperCase());
-  const row=Math.max(2,sheet.getLastRow()+1);setFields(sheet,row,map,resource,x,true);persistId(sheet,row,map,id);
+  const sheet=workbookFor(resource), map=headerMap(sheet,resource), x=normalizeInput(resource,req,null), id=x.id||newId(resource==="attendance"?"ATT":resource.toUpperCase());
+  x.id=id;
+  const row=Math.max(2,sheet.getLastRow()+1);setFields(sheet,row,map,resource,x,true);
+  if(!map.id)persistId(sheet,row,map,id);
   return {item:{...x,id},message:"Đã thêm dữ liệu."};
 }
 function update(resource,req){
   if(!req.id)throw Error("Thiếu ID bản ghi.");const r=records(resource), hit=r.items.filter(x=>x.id===req.id);if(hit.length!==1)throw Error(hit.length?"Có ID trùng; đã dừng để bảo toàn dữ liệu.":"Không tìm thấy bản ghi cần cập nhật.");
   const current=objectOf(resource,{...hit[0],map:r.map,values:hit[0].values}),x=normalizeInput(resource,req,current),row=hit[0].row;
-  setFields(r.sheet,row,r.map,resource,x,false);persistId(r.sheet,row,r.map,req.id);return {item:{...x,id:req.id},message:"Đã cập nhật dữ liệu."};
+  setFields(r.sheet,row,r.map,resource,x,false);if(!r.map.id)persistId(r.sheet,row,r.map,req.id);return {item:{...x,id:req.id},message:"Đã cập nhật dữ liệu."};
 }
 function remove(resource,id){
   if(!id)throw Error("Thiếu ID bản ghi.");const r=records(resource),hits=r.items.filter(x=>x.id===id);
@@ -185,11 +243,27 @@ function restore(resource,id){
   if(meta)meta.remove();r.sheet.showRows(row);return {message:"Đã khôi phục dữ liệu."};
 }
 function dashboard(month,companyId){
-  const all=getAll(), prefix=month+"-";
-  const cash=all.cash.reduce((s,x)=>s+x.amount,0), accounts=all.accounts.reduce((s,x)=>s+x.amount,0), investments=all.investments.reduce((s,x)=>s+x.currentValue,0), loans=all.loans.reduce((s,x)=>s+x.remaining,0);
-  const daily={};all.cash.concat(all.accounts).filter(x=>x.date.startsWith(prefix)).forEach(x=>{daily[x.date]||={date:x.date,income:0,expense:0};if(x.amount>=0)daily[x.date].income+=x.amount;else daily[x.date].expense+=Math.abs(x.amount);});
-  const att=all.attendance.filter(x=>x.date.startsWith(prefix)&&(!companyId||x.companyId===companyId));
-  const byDay={},byMonth={};all.attendance.filter(x=>!companyId||x.companyId===companyId).forEach(x=>{byMonth[x.date.slice(0,7)]=(byMonth[x.date.slice(0,7)]||0)+x.pay;});
-  att.forEach(x=>byDay[x.date]=(byDay[x.date]||0)+x.hours);
-  return {finance:{cash,accounts,investments,loans,assets:cash+accounts+investments+loans,daily:Object.values(daily)},attendance:{days:att.length,hours:att.reduce((s,x)=>s+x.hours,0),pay:att.reduce((s,x)=>s+x.pay,0),companies:all.companies.filter(x=>x.active).map(x=>x.id),daily:Object.keys(byDay).map(date=>({date,hours:byDay[date]})),monthly:Object.keys(byMonth).sort().slice(-12).map(month=>({month,pay:byMonth[month]}))}};
+  const prefix=month+"-", daily={},byDay={},byMonth={};
+  const cashRows=records("cash",false,true), accountRows=records("accounts",false,true), investmentRows=records("investments",false,true), loanRows=records("loans",false,true);
+  const attendanceRows=records("attendance",false,true), companyRows=records("companies",false,true);
+  const sumField=(r,k)=>r.items.reduce((sum,item)=>sum+num(value(item,r.map,k)),0);
+  const cash=sumField(cashRows,"amount"), accounts=sumField(accountRows,"amount"), investments=sumField(investmentRows,"currentValue"), loans=loanRows.items.reduce((sum,item)=>sum+objectOf("loans",{...item,map:loanRows.map,values:item.values}).remaining,0);
+  [cashRows,accountRows].forEach(r=>r.items.forEach(item=>{
+    const date=dateOut(value(item,r.map,"date"));
+    if(!date||!date.startsWith(prefix))return;
+    const amount=num(value(item,r.map,"amount"));
+    if(!daily[date])daily[date]={date,income:0,expense:0};
+    if(amount>=0)daily[date].income+=amount;else daily[date].expense+=Math.abs(amount);
+  }));
+  let days=0,hours=0,pay=0;
+  attendanceRows.items.forEach(item=>{
+    const date=dateOut(value(item,attendanceRows.map,"date")), company=String(value(item,attendanceRows.map,"companyId")||"");
+    if(!date)return;
+    const row={...item,map:attendanceRows.map,values:item.values}, record=objectOf("attendance",row);
+    if(!companyId||company===companyId)byMonth[date.slice(0,7)]=(byMonth[date.slice(0,7)]||0)+record.pay;
+    if(!date.startsWith(prefix)||companyId&&company!==companyId)return;
+    days++;hours+=record.hours;pay+=record.pay;byDay[date]=(byDay[date]||0)+record.hours;
+  });
+  const companies=companyRows.items.map(item=>objectOf("companies",{...item,map:companyRows.map,values:item.values})).filter(item=>item.active).map(item=>item.id);
+  return {finance:{cash,accounts,investments,loans,assets:cash+accounts+investments+loans,daily:Object.values(daily)},attendance:{days,hours,pay,companies,daily:Object.keys(byDay).map(date=>({date,hours:byDay[date]})),monthly:Object.keys(byMonth).sort().slice(-12).map(month=>({month,pay:byMonth[month]}))}};
 }
