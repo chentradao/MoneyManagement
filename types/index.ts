@@ -1,0 +1,9 @@
+export type CashTransaction = { id:string; date:string; description:string; amount:number; balance:number };
+export type AccountTransaction = { id:string; date:string; amount:number; balance:number; note:string };
+export type Investment = { id:string; type:string; name:string; principal:number; currentValue:number; profitLoss:number };
+export type Loan = { id:string; borrower:string; loanDate:string; amount:number; interestRate:number; dueDate:string; status:"Chưa trả"|"Đã trả"; remaining:number; note:string };
+export type Company = { id:string; name:string; active:boolean };
+export type SalaryRate = { id:string; companyId:string; effectiveFrom:string; effectiveTo:string; rate:number; unit:string; note:string };
+export type Attendance = { id:string; date:string; companyId:string; startTime:string; endTime:string; hours:number; status:string; salaryRate:number; pay:number; note:string };
+export type DashboardData = { finance:{cash:number; accounts:number; investments:number; loans:number; assets:number; daily:{date:string;income:number;expense:number}[]}; attendance:{days:number;hours:number;pay:number;companies:string[];daily:{date:string;hours:number}[];monthly:{month:string;pay:number}[]} };
+export type AppData = { cash:CashTransaction[]; accounts:AccountTransaction[]; investments:Investment[]; loans:Loan[]; companies:Company[]; rates:SalaryRate[]; attendance:Attendance[] };

@@ -1,0 +1,6 @@
+export const todayISO = () => {const parts=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());const get=(type:string)=>parts.find(x=>x.type===type)?.value||"";return get("year")+"-"+get("month")+"-"+get("day")};
+export const formatDate = (iso:string) => iso ? new Intl.DateTimeFormat("vi-VN", { timeZone:"UTC", day:"2-digit", month:"2-digit", year:"numeric" }).format(new Date(iso.slice(0,10)+"T00:00:00Z")) : "—";
+export const monthKey = (iso:string) => (iso||"").slice(0,7);
+export const currentMonth = () => todayISO().slice(0,7);
+const isoUtc=(date:Date)=>date.getUTCFullYear()+"-"+String(date.getUTCMonth()+1).padStart(2,"0")+"-"+String(date.getUTCDate()).padStart(2,"0");
+export function dateRange(preset:string):{from:string;to:string}{const today=todayISO(),d=new Date(today+"T12:00:00Z");if(preset==="today")return{from:today,to:today};if(preset==="week"){const day=d.getUTCDay()||7;const start=new Date(d);start.setUTCDate(d.getUTCDate()-day+1);return{from:isoUtc(start),to:today}}if(preset==="month")return{from:today.slice(0,7)+"-01",to:today};if(preset==="previous"){const first=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-1,1,12));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),0,12));return{from:isoUtc(first),to:isoUtc(last)}}return{from:"",to:""}}
