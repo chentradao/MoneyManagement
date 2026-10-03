@@ -117,7 +117,7 @@ function records(resource,includeDeleted,skipIds){
   return {sheet,map,headers:map._headers,items:result};
 }
 function dateOut(v){if(!v)return "";if(v instanceof Date)return Utilities.formatDate(v,CONFIG.timezone,"yyyy-MM-dd");const s=String(v);if(/^\d{4}-\d\d-\d\d/.test(s))return s.slice(0,10);return s;}
-function timeOut(v){if(!v)return "";if(v instanceof Date)return Utilities.formatDate(v,CONFIG.timezone,"HH:mm");if(typeof v==="number")return Utilities.formatDate(new Date(Math.round(v*86400000)),"UTC","HH:mm");return String(v).slice(0,5);}
+function timeOut(v,timezone){if(!v)return "";if(v instanceof Date)return Utilities.formatDate(v,timezone||CONFIG.timezone,"HH:mm");if(typeof v==="number")return Utilities.formatDate(new Date(Math.round(v*86400000)),"UTC","HH:mm");return String(v).slice(0,5);}
 function num(v){if(typeof v==="number")return v;if(v===""||v==null)return 0;return Number(String(v).replace(/,/g,""))||0;}
 function value(record,map,k){return map[k]?record.values[map[k]-1]:"";}
 function objectOf(resource,r){
@@ -128,12 +128,12 @@ function objectOf(resource,r){
   if(resource==="loans"){const amount=num(value(r,m,"amount")),status=String(value(r,m,"status")||"Chưa trả");return{id,borrower:String(value(r,m,"borrower")||""),loanDate:dateOut(value(r,m,"loanDate")),amount,interestRate:num(value(r,m,"interestRate")),dueDate:dateOut(value(r,m,"dueDate")),status,remaining:status==="Đã trả"?0:(m.remaining?num(value(r,m,"remaining")):amount),note:String(value(r,m,"note")||"")};}
   if(resource==="companies")return{id,name:String(value(r,m,"name")||""),active:["Có","Yes","TRUE","1","Đang hoạt động","true"].includes(String(active)),note:String(value(r,m,"note")||"")};
   if(resource==="rates")return{id,companyId:String(value(r,m,"companyId")||""),effectiveFrom:dateOut(value(r,m,"effectiveFrom")),effectiveTo:dateOut(value(r,m,"effectiveTo")),rate:num(value(r,m,"rate")),unit:String(value(r,m,"unit")||""),note:String(value(r,m,"note")||"")};
-  const date=dateOut(value(r,m,"date")),companyId=String(value(r,m,"companyId")||""), startTime=timeOut(value(r,m,"startTime")),endTime=timeOut(value(r,m,"endTime"));
+  const date=dateOut(value(r,m,"date")),companyId=String(value(r,m,"companyId")||""),timezone=r.timezone||CONFIG.timezone,startTime=timeOut(value(r,m,"startTime"),timezone),endTime=timeOut(value(r,m,"endTime"),timezone);
   const hrs=num(value(r,m,"hours")), rate=num(value(r,m,"salaryRate")), payVal=value(r,m,"pay"), status=String(value(r,m,"status")||"");
   const pay=status==="Nghỉ không lương"?0:(payVal!==""&&payVal!=null?num(payVal):hrs*rate);
   return{id,date,companyId,startTime,endTime,hours:hrs,salaryRate:rate,pay,status,note:String(value(r,m,"note")||"")};
 }
-function list(resource){const r=records(resource);return {items:r.items.map(x=>objectOf(resource,{...x,map:r.map,values:x.values})),schema:{sheet:r.sheet.getName(),headers:r.headers||[]}};}
+function list(resource){const r=records(resource);return {items:r.items.map(x=>objectOf(resource,{...x,map:r.map,values:x.values,timezone:r.sheet.getParent().getSpreadsheetTimeZone()})),schema:{sheet:r.sheet.getName(),headers:r.headers||[]}};}
 function getAll(){
   const out={};["cash","accounts","investments","loans","companies","rates","attendance"].forEach(k=>out[k]=list(k).items);
   return out;
@@ -259,7 +259,7 @@ function dashboard(month,companyId){
   attendanceRows.items.forEach(item=>{
     const date=dateOut(value(item,attendanceRows.map,"date")), company=String(value(item,attendanceRows.map,"companyId")||"");
     if(!date)return;
-    const row={...item,map:attendanceRows.map,values:item.values}, record=objectOf("attendance",row);
+    const row={...item,map:attendanceRows.map,values:item.values,timezone:attendanceRows.sheet.getParent().getSpreadsheetTimeZone()}, record=objectOf("attendance",row);
     if(!companyId||company===companyId)byMonth[date.slice(0,7)]=(byMonth[date.slice(0,7)]||0)+record.pay;
     if(!date.startsWith(prefix)||companyId&&company!==companyId)return;
     days++;hours+=record.hours;pay+=record.pay;byDay[date]=(byDay[date]||0)+record.hours;

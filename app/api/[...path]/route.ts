@@ -19,8 +19,13 @@ async function forward(req:NextRequest, method:string){
     const text=await result.text();
     let data:any;
     try{data=JSON.parse(text)}catch{
-      console.error("Apps Script returned a non-JSON response",{status:result.status,contentType});
-      return NextResponse.json({error:"Google Apps Script không trả dữ liệu JSON. Hãy kiểm tra URL /exec, quyền truy cập và bản triển khai Web App."},{status:502});
+      const finalUrl=new URL(result.url||url), contentType=result.headers.get("content-type")||"không xác định";
+      const redirectedToLogin=/accounts\.google\.com|ServiceLogin|signin/i.test(finalUrl.href);
+      console.error("Apps Script returned a non-JSON response",{status:result.status,contentType,finalOrigin:finalUrl.origin,redirectedToLogin});
+      const error=redirectedToLogin
+        ?"Google Apps Script chuyển yêu cầu đến trang đăng nhập. Trong Quản lý triển khai, đặt Chạy dưới tư cách là tài khoản của bạn và Quyền truy cập là Bất kỳ ai; sau đó triển khai phiên bản mới."
+        :`Apps Script trả về nội dung không phải JSON (HTTP ${result.status}, ${contentType}). Kiểm tra deployment /exec đang hoạt động, quyền truy cập Web App và URL NEXT_PUBLIC_API_URL trên Vercel.`;
+      return NextResponse.json({error},{status:502});
     }
     if(!result.ok){
       console.error("Apps Script request failed",{status:result.status,contentType});
